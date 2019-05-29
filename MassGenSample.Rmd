@@ -1,0 +1,324 @@
+---
+title: "MassGenSample"
+author: "Kaeli Yuen"
+date: "5/29/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# What is wrong with healthcare in Massandopolis? 
+
+## Step 0: Getting ready 
+Here, we are loading packages we expect may be needed for this project. 
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(stringr)
+library(readr)
+library(ggplot2)
+library(tidyverse)
+
+
+```
+
+## Step 1: First look at the data
+To get a sense of what we are working with, we are reading the available data into R dataframes, and looking at a preview of what's contained in each. Observations will be made about each file regarding its contents, potential cleaning to be done, and potential pitfalls to keep in mind should the data be used for analysis. 
+
+```{r}
+
+# Patients
+patients <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/patients.csv")
+# Observations: This dataset contains 8360 observations (appear to be patients) 
+# of 20 variables, which appear to be patient demographic and personally 
+# identifying information. There are several potential unique identifiers here, 
+# including "Id", "SSN", "Passport". Later, we will examine this dataset for 
+# duplicates, etc. 
+# Renaming "Id" to "PATIENT" to be consistent with other tables 
+patients <- patients %>% 
+  rename(PATIENT = Id)
+
+# Allergies 
+allergies <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/allergies.csv")
+# Observations: This dataset contains 3262 observations (appear to be 
+# instances of allergies) of 6 varibales, which appear to include SNOMED CT
+# concept codes for allergies, patient IDs, encounter IDs, and start and stop
+# dates (if applicable). Note that column "PATIENT" looks to be the unique 
+# patient identifier called "Id" in patients.csv. 
+
+# Careplans 
+careplans <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/careplans.csv")
+# Observations: 40048 observations (appear to be high-level, standardized 
+# care plans, e.g. "routine antenatal care") of 9 variables. 
+
+# Concepts 
+concepts <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/concepts.csv")
+# Observations: 725 observations (appear to be concepts from standardized 
+# clinical terminologies) of 4 variables, appears to be missing column 
+# headings. Should maybe be "Source", "Code", "Description", "Associated condition"?
+
+# Conditions
+conditions <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/conditions.csv")
+# Observations: 109720 observations (appear to be instances of conditions) 
+# of 6 variables. Column "Code" appears to be based on SNOMED-CT codes but 
+# is formatted incorrectly. 
+
+# Encounters
+encounters <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/encounters.csv")
+# Observations: 748639 observations (appear to be clinical encounters) 
+# of 11 variables, including SNOMED-CT encounter code, cost, reason for
+# encounter. A quick look through the data reveals that there are only 
+# two values under "cost": "77.49" and "129.16", with the vast majority
+# being the latter. Earliest encounter is 1908-09-02; latest is 2019-05-11. 
+
+# Imaging studies
+imaging_studies <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/imaging_studies.csv")
+# Observations: 8278 observations (appear to be instances of imaging 
+# studies) of 10 variables, including SNOMED-CT body site codes and 
+# descriptions, modailty and description, and SOP codes and descriptions. 
+# I am not familiar with SOP codes, but per UMLS this appears to indicate 
+# "source of payment", and allows for data comparison by payer type across
+# states, various provider types, and to national benchmarks.
+
+# Immunizations
+immunizations <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/immunizations.csv")
+# Observations: 181900 observations (appear to be instances of immunization 
+# procedures) of 6 variables. Not sure what type of "code" is referred to here.
+# Does not appear to be SNOMED-CT, ICD, or CPT. 
+
+# Medications
+medications <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/medications.csv")
+# Observations: 124759 observations (appear to be instances of prescriptions) 
+# of 11 variables, including cost, dispenses, total cost, and reasons for 
+# prescription (if available). 
+
+# Observations
+observations <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/observations.csv")
+# Observations: 3199998 observations (appear to be primarily instances of 
+# labs and vitals) of 8 variables. 
+
+# Organizations
+organizations <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/organizations.csv")
+# Observations: 125 observations (appear to be healthcare institutions) 
+# of 8 variables, including "utilization". Not yet sure what the 
+# value in this column refers to. 
+
+# Procedures
+procedures <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/procedures.csv")
+# Observations: 419399 observations (appear to be instances of procedures)
+# of 8 variables, including cost and reason for procedure (if available).
+# Note formatting of code, which appears to be based on SNOMED-CT. 
+
+# Providers
+providers <- read_csv("/Users/kaeliyuen/Desktop/massandopolis/providers.csv")
+# Observations: 125 observations (appear to be individual general 
+# practice providers) of 10 variables, including utilization and address. 
+
+```
+## Step 2: Generating questions
+The people of Massandopolis have been rather non-specific with their complaints about healthcare in their community. While there are many questions that can be investigated using the data provided, for the sake of this early exploration we will investigate the following top-level concerns:
+
+(1) Are the people of Massandopolis sicker than they should be? 
+(2) Are the people of Massandopolis receiving the appropriate preventive care? 
+
+We will aim to gain insight into the answers to these concerns by asking the following specific questions that are likely good indicators of quality of care: 
+
+(1) How does life expectancy in Massandopolis compare with national averages? 
+(2) What is the rate of adherence to pneumococcal vaccination guidelines? 
+(3) What is the prevalence of hypertension in Massandopolis adults? 
+
+To ensure relevance to today's healthcare and to constrain the problem, our analysis will largely be limited to encounters that have occurred within the past 10 years (post-Affordable Care Act), rather than the full 100 years presented in this dataset. 
+
+## Step 4: Life expectancy 
+Here, we will determine average life expectancy in Massandopolis and compare to national average. Lower than expected life expectancy may indicate a number of problems with healthcare in Massandopolis, including poor preventive care, poor management of chronic conditions, lack of accessibility, prohibitive costs, etc.  
+
+```{r}
+# Here, we will determine average age of death in the last 10 
+# years in Massandopolis. 
+patients_life_expectancy <- patients %>%
+  # First, we filter the patients file for patients whose have a 
+  #death date after 2009-01-01.
+  filter(DEATHDATE > "2009-01-01") %>%
+  # Then, we create a new column "age_at_death", which is 
+  # calculated from death date and birthdate.
+  mutate(age_at_death = year(as.period(interval(start = BIRTHDATE, 
+                                                end = DEATHDATE))))
+
+# Now that we have calculated age at death, we can determine 
+# some basic stats (N, mean, SD, median, range)
+patients_life_expectancy_stats <- patients_life_expectancy %>%
+  summarise(N = n(), avg = mean(age_at_death), 
+            SD = sd(age_at_death), median = median(age_at_death))
+
+# For fun, let's look at a plot of the age at 
+# death to see if anything jumps out
+patients_life_expectancy_plot <- ggplot(patients_life_expectancy, 
+                                        aes(x=age_at_death)) + geom_histogram(binwidth = 3) +labs(title="Histogram for Age at Death", x="Age", y="Count") 
+patients_life_expectancy_plot
+
+
+```
+## Step 4 Results and conclusions
+In the last 10 years, 982 patients within this sample have died in Massandopolis. The average age of death in this sample is 68.01 years (SD = 19.13), and the median is 74 years. Per the CDC (https://www.cdc.gov/nchs/data/nvsr/nvsr67/nvsr67_05.pdf), the average life expectancy in the US in 2016 was 78.6. 
+
+At a glance, the histogram does not demosntrate a drastically unexpected pattern in distribution of age at death. 
+
+There are many follow-up questions raised by these top-level findings. For example: 
+- Is there meaningful variation in life expectancy by patient demographic, healthcare organization/provider, zip code, etc? 
+- What has the trend in Massandopolis life expectancy been compared with the national average, and what are potentially contributing contexual factors? 
+- What are the most common causes of death in Massandopolis and how is care for these conditions managed? To what extent does management adhere to standards of care? 
+- What is the burden of disease in Massandopolis? Are environmental factors contributing to higher than average comorbidity? 
+- What is the rate of iatrogenic events in Massandopolis healthcare organizations? 
+- To what extent are immunization guidelines being followed by Massandopolis providers? 
+- Etc. 
+
+## Step 5: Adherence to pneumococcal vaccination guidelines
+We will touch upon some of the above questions as we proceed. For the purpose of demonstratioon, we will investigate adherence to clinical guidelines in Massandopolis by determining theier adherence to CDC guidelines about pneumonococcal vaccines in adults (https://www.cdc.gov/vaccines/vpd/pneumo/hcp/PCV13-adults.html) 
+
+Per the CDC, all adults over age 65 should receive a dose of pneumococcal conjugate vaccine (PCV13 or Prevnar13®) followed by a dose of pneumococcal polysaccharide vaccine (PPSV23 or Pneumovax23®). We will determine the percentage of adults over 65 included in this sample during the past years who have had this vaccination sequence. 
+
+```{r}
+# First, we will build a sample of patients in the 
+# denominator for this measurement. Inclusion criteria 
+# are the following: 
+# - Age >= 65 years 
+# - At least one encounter in the last 10 years 
+#
+# First, we will filter the encounters file for encounters 
+# completed in the last 10 years. 
+encounters_recent <- encounters %>% 
+  filter(STOP > "2009-01-01") %>%
+  # Net, we will join this data with the patients file 
+  full_join(patients) %>%
+  # Next, we will filter for patients whose birtdates 
+  # are 1953-01-01 or before. These are patients who would be 
+  # >= 65 years old during the last 10 years included in this sample. 
+  # I acknowledge that there may be patients in the sample who 
+  # receive their second vaccine after the period included in the 
+  # sample, and will therefore fail to meet the performance 
+  # measure per this analysis. 
+  filter(BIRTHDATE <= "1953-01-01") 
+
+# Now, let's determine how many unqiue patients are 
+# in this sample. 
+PCV_denom <- encounters_recent %>%
+  select(PATIENT) %>%
+  distinct()
+# Looks like there are 3413 patients in the denominator. 
+
+# Next, let's determine how many of these patients got 
+# the PCV13 vaccine (first vaccine in the sequence). 
+PCV_num_13 <- immunizations %>%
+  # Now, let's filter the immunization events for those 
+  # relevant to the patients in our denominator. 
+  semi_join(PCV_denom) %>% 
+  # Next, let's see how many patients in our denominator 
+  # have received the first vaccine, "Pneumococcal conjugate 
+  # PCV 13" (Code "133"). Note that for the sake of time, I 
+  # have not fully investigated whether there are alternative 
+  # names for these vaccines included in this data.
+  filter(CODE == "33") 
+# It appears that there are 1907 observations here... out of 
+# 3413 who are in the denominator (55.87%)! Not looking too 
+# great. Let's do a quick check to see if certain patients 
+# in the sample may have gotten the same immunization twice: 
+PCV_dup_check <- PCV_num_13 %>%
+  group_by(PATIENT)%>%
+  count()
+# Looks like there aren't any patients who had that immunization twice.
+# Next, let's see which of these patients also got the PCV23 vaccine.  
+PCV_num_13_23 <- immunizations %>% 
+  semi_join(PCV_num_13, by = "PATIENT") %>%
+  filter(CODE == "133")
+# Looks like 557 patients in our demonimator have received both 
+# the PCV 13 and PCV 23 (16.32%) vaccines. Note that this is a conservative
+# estimate for adherence to the CDC guideline, since exact age at the time 
+# of vaccination was not taken into account. 
+  
+```
+## Step 5 Results and conclusions
+It appears that there is very poor adherence (16.32%) in Massandopolis to this guideline, which is aimed at preventing pneumococcal pneumonia (a condition which causes a significant degree of morbidity and mortality in the US (http://www.nfid.org/idinfo/pneumococcal/media-factsheet.html)). If this is representative of adherence to other clinical guidelines in Massandopolis, there may be cause for concern that preventive medicine in Massandopolis is lacking. 
+
+## Step 6: Prevalence of hypertension
+To further investigate the state of preventive medicine in Massandopolis, let's take a look at the rates of another common risk factor for morbidity and mortality: hypertension. Hypertension is a significant risk factor for  cardiovascular disease, which is the number one cause of mortality in the US (https://www.cdc.gov/nchs/products/databriefs/db328.htm). 
+
+```{r}
+# This time, we'll limit the analysis to observations 
+# made within the last 1 year rather than 10 years. 
+# The reason for this is that I plan to take the average 
+# of blood pressure values for any patient in the sample 
+# with multiple readings, and 10 years is not a clinically 
+# appropriate time frame over which to assume an average blood 
+# pressure will be meaningful.
+# We will also limit the analysis to adults age 18 or older. 
+# First, let's filter the observations for those within the last one year. 
+blood_pressure <- observations %>% 
+  filter(DATE >= "2018-01-01") %>% 
+  # Next, let's filter for observations of interest 
+  # to this analysis
+  filter(DESCRIPTION == "Systolic Blood Pressure" | 
+           DESCRIPTION == "Diastolic Blood Pressure") 
+
+# Next, let's filter for adults age 18 or older at the 
+# time of their blood pressure reading. 
+blood_pressure_adults <- blood_pressure %>% 
+  full_join(patients, by = "PATIENT") %>% 
+  # Creating a new variable for "adult", 
+  # where 1 = adult age 18 or older at time of blood pressure reading. 
+  mutate(adult = ifelse(((year(as.period(interval(start = BIRTHDATE, 
+                                                  end = DATE)))) >= 18), 1, 0)) %>%
+  filter(adult == 1)
+
+# Now, since each patient has multiple systolic and diastolic 
+# blood pressure values, I am going to take the average of each. 
+blood_pressure_avg <- blood_pressure_adults %>% 
+  group_by(PATIENT, DESCRIPTION) %>% 
+  mutate(AVG = mean(as.numeric(VALUE)))
+
+# Now, let's rearrange the dataframe such that systolic 
+# blood pressure and diastolic blood pressure are each their own column. 
+blood_pressure_avg <- blood_pressure_avg %>%
+  select(-c(CODE, VALUE, ENCOUNTER)) %>%
+  spread(blood_pressure_avg, key = DESCRIPTION, value = AVG) %>%
+  select (-c(DATE)) %>%
+  distinct(PATIENT, .keep_all = TRUE)
+# Looks like there are 3137 patients in the sample who have 
+# blood pressure observations in the past year! 
+
+# Now, let's figure out who has hypertension. For the purposes 
+# of this analysis, we will define hypertension as systolic blood 
+# pressure >= 140, OR diaastolic blood pressure >= 90. Here, we are 
+# doing some "feature engineering" to create a variable for presence 
+# of hypertension, where 1 = hypertension. 
+hypertension <- blood_pressure_avg %>%
+  mutate(HTN = ifelse((`Systolic Blood Pressure` >= 140 | 
+                         `Diastolic Blood Pressure` >= 90), 1, 0))
+
+# Next, let's see the rate of hypertension in this sample 
+hypertension_freq <- hypertension %>% 
+  group_by(HTN) %>%
+  summarise(freq = n()) 
+# Looks like 977 of 3137 patients in this sample 
+# (31.14%) have hypertension.
+  
+```
+## Step 6 Results and conclusions 
+Of 3137 patients in the sample who have had blood pressure readings in the last year, 977 (31.14%) have hypertension (defined as systolic blood pressure >= 140, OR diaastolic blood pressure >= 90). This is slightly higher than the national average of 29.00% (https://www.cdc.gov/nchs/data/databriefs/db289.pdf), significance of this difference not yet evaluated. 
+
+## Step 7: Overall conclusion 
+For this early investigation into what may be wrong with healthcare in Massandopolis, we have investigated the following specific questions:
+
+(1) How does life expectancy in Massandopolis compare with national averages? 
+(2) What is the rate of adherence to pneumococcal vaccination guidelines? 
+(3) What is the prevalence of hypertension in Massandopolis adults?
+
+Our overall aim was to gain insight into whether the people of Massandopolis are (1) sicker than they should be, and (2) receiving appropriate preventive care. High quality preventive care is essential to reducing rates of chronic conditions such as cardiovascular disease, which are the primary causes of morbidity and mortality in the US. 
+
+We found that average life expectancy in Massandopolis is 10 years shorter than the national average (68.01 years in Massandopolis vs. 78.6 years nationally). This suggests that there may be a higher burden of disease possible resulting from poorer quality of care. Preventive care is particularly important in reducing rates of morbidity and mortality, and our findings suggest that poor preventive care in Massandopolis may be contributing to lower life expectancy. 
+
+Two important aspects of preventive care are (1) adherence to preventive care clinical guidelines for vaccines, screening, etc., and (2) management of risk factors such as hypertension and tobacco use. In our analysis, we found that Massandopolis has a very low rate of adherence to pneumococcal vaccination guidelines (16.32%), and a mildly increased prevalence of hypertension compared to national averages (31.14% in Massandopolis vs. 29.00% nationally). These results support the theory that poor preventive care is being practiced in Massandopolis. 
+
